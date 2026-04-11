@@ -1,0 +1,21 @@
+[package]
+name = "rp-can2040-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Raw FFI bindings and static library for the can2040 software CAN bus implementation"
+license = "GPL-3.0"
+repository = "https://github.com/atomi-ai/can2040-rust"
+
+[features]
+default = ["rp2040"]
+rp2040 = []
+rp2350 = []
+# Regenerate Rust bindings from can2040.h at build time (requires libclang).
+bindgen = ["dep:bindgen"]
+# Compile can2040.c from source via CMake (requires pico-sdk, arm-none-eabi-gcc).
+# Implies bindgen.
+build-from-source = ["bindgen", "dep:cmake"]
+
+[build-dependencies]
+bindgen = { version = "0.69", optional = true }
+cmake = { version = "0.1", optional = true }
