@@ -16,7 +16,8 @@ const EXTENDED_ID_MASK: u32 = 0x1FFF_FFFF;
 
 // ─── CanError ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, defmt::Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CanError {
     Overrun,
 }
@@ -174,6 +175,7 @@ impl core::fmt::Debug for CanFrame {
     }
 }
 
+#[cfg(feature = "defmt")]
 impl defmt::Format for CanFrame {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(
@@ -206,7 +208,8 @@ pub type CanCallback = fn(Notification);
 // ─── Statistics ──────────────────────────────────────────────────────────────
 
 /// Snapshot of can2040 bus counters.
-#[derive(Debug, defmt::Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CanStatistics {
     pub rx_total: u32,
     pub tx_total: u32,
