@@ -14,6 +14,21 @@ const ID_RTR: u32 = 1 << 30;
 const ID_EFF: u32 = 1 << 31;
 const EXTENDED_ID_MASK: u32 = 0x1FFF_FFFF;
 
+// ─── CanError ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, defmt::Format)]
+pub enum CanError {
+    Overrun,
+}
+
+impl embedded_can::Error for CanError {
+    fn kind(&self) -> embedded_can::ErrorKind {
+        embedded_can::ErrorKind::Overrun
+    }
+}
+
+// ─── CanFrame ─────────────────────────────────────────────────────────────────
+
 /// A CAN bus frame.
 ///
 /// The raw `id` field follows the can2040 convention:
@@ -24,7 +39,7 @@ const EXTENDED_ID_MASK: u32 = 0x1FFF_FFFF;
 pub struct CanFrame(sys::can2040_msg);
 
 impl CanFrame {
-    /// Constructs a frame from a raw can2040 id and data payload.
+    /// Constructs a frame from a raw can2040 id word and data payload.
     /// `dlc` is derived from `data.len()`. Returns `None` if `data` exceeds 8 bytes.
     pub fn new(id: u32, data: &[u8]) -> Option<Self> {
         if data.len() > 8 {
@@ -55,24 +70,14 @@ impl CanFrame {
         }))
     }
 
-    /// Raw can2040 id word, including EFF/RTR flag bits.
+    /// Full raw can2040 id word, including EFF/RTR flag bits.
     pub fn raw_id(&self) -> u32 {
         self.0.id
     }
 
-    /// True if this is an extended (29-bit) frame.
-    pub fn is_extended(&self) -> bool {
-        self.0.id & ID_EFF != 0
-    }
-
-    /// True if this is a remote frame.
-    pub fn is_remote(&self) -> bool {
-        self.0.id & ID_RTR != 0
-    }
-
-    /// The frame identifier, with flag bits masked out.
-    pub fn id(&self) -> u32 {
-        if self.is_extended() {
+    /// Frame arbitration ID with flag bits masked out.
+    pub fn arb_id(&self) -> u32 {
+        if self.0.id & ID_EFF != 0 {
             self.0.id & EXTENDED_ID_MASK
         } else {
             self.0.id & 0x7FF
@@ -84,7 +89,75 @@ impl CanFrame {
     }
 
     pub fn data(&self) -> &[u8] {
-        unsafe { &self.0.__bindgen_anon_1.data[..self.0.dlc as usize] }
+        // dlc > 8 is valid per CAN spec but data array is only 8 bytes
+        let len = (self.0.dlc as usize).min(8);
+        unsafe { &self.0.__bindgen_anon_1.data[..len] }
+    }
+}
+
+impl embedded_can::Frame for CanFrame {
+    fn new(id: impl Into<embedded_can::Id>, data: &[u8]) -> Option<Self> {
+        if data.len() > 8 {
+            return None;
+        }
+        let raw_id = match id.into() {
+            embedded_can::Id::Standard(id) => id.as_raw() as u32,
+            embedded_can::Id::Extended(id) => id.as_raw() | ID_EFF,
+        };
+        let mut arr = [0u8; 8];
+        arr[..data.len()].copy_from_slice(data);
+        Some(Self(sys::can2040_msg {
+            id: raw_id,
+            dlc: data.len() as u32,
+            __bindgen_anon_1: can2040_msg__bindgen_ty_1 { data: arr },
+        }))
+    }
+
+    fn new_remote(id: impl Into<embedded_can::Id>, dlc: usize) -> Option<Self> {
+        if dlc > 15 {
+            return None;
+        }
+        let raw_id = match id.into() {
+            embedded_can::Id::Standard(id) => id.as_raw() as u32 | ID_RTR,
+            embedded_can::Id::Extended(id) => id.as_raw() | ID_EFF | ID_RTR,
+        };
+        Some(Self(sys::can2040_msg {
+            id: raw_id,
+            dlc: dlc as u32,
+            __bindgen_anon_1: can2040_msg__bindgen_ty_1 { data: [0u8; 8] },
+        }))
+    }
+
+    fn is_extended(&self) -> bool {
+        self.0.id & ID_EFF != 0
+    }
+
+    fn is_remote_frame(&self) -> bool {
+        self.0.id & ID_RTR != 0
+    }
+
+    fn id(&self) -> embedded_can::Id {
+        if self.0.id & ID_EFF != 0 {
+            embedded_can::Id::Extended(
+                embedded_can::ExtendedId::new(self.0.id & EXTENDED_ID_MASK).unwrap(),
+            )
+        } else {
+            embedded_can::Id::Standard(
+                embedded_can::StandardId::new((self.0.id & 0x7FF) as u16).unwrap(),
+            )
+        }
+    }
+
+    fn dlc(&self) -> usize {
+        self.0.dlc as usize
+    }
+
+    fn data(&self) -> &[u8] {
+        if self.0.id & ID_RTR != 0 {
+            return &[];
+        }
+        let len = (self.0.dlc as usize).min(8);
+        unsafe { &self.0.__bindgen_anon_1.data[..len] }
     }
 }
 
@@ -93,7 +166,10 @@ impl core::fmt::Debug for CanFrame {
         write!(
             f,
             "CanFrame {{ id: {:#x}, extended: {}, remote: {}, data: {:x?} }}",
-            self.id(), self.is_extended(), self.is_remote(), self.data()
+            self.arb_id(),
+            self.0.id & ID_EFF != 0,
+            self.0.id & ID_RTR != 0,
+            self.data()
         )
     }
 }
@@ -103,10 +179,15 @@ impl defmt::Format for CanFrame {
         defmt::write!(
             f,
             "CanFrame {{ id: {:#x}, extended: {=bool}, remote: {=bool}, data: {:x} }}",
-            self.id(), self.is_extended(), self.is_remote(), self.data()
+            self.arb_id(),
+            self.0.id & ID_EFF != 0,
+            self.0.id & ID_RTR != 0,
+            self.data()
         );
     }
 }
+
+// ─── Notification ────────────────────────────────────────────────────────────
 
 /// Event delivered to the user callback from interrupt context.
 pub enum Notification {
@@ -122,6 +203,8 @@ pub enum Notification {
 /// an `embassy_sync::channel::Channel`.
 pub type CanCallback = fn(Notification);
 
+// ─── Statistics ──────────────────────────────────────────────────────────────
+
 /// Snapshot of can2040 bus counters.
 #[derive(Debug, defmt::Format)]
 pub struct CanStatistics {
@@ -130,6 +213,8 @@ pub struct CanStatistics {
     pub tx_attempt: u32,
     pub parse_error: u32,
 }
+
+// ─── Can2040 ─────────────────────────────────────────────────────────────────
 
 // repr(C) with `cbus` as the first field lets us recover a pointer to
 // Can2040State from a *mut can2040 inside the C callback. The C library passes
@@ -146,6 +231,9 @@ struct Can2040State {
 /// This type owns all CAN state. There are no library-level globals: the
 /// caller is responsible for storage and for routing the correct PIO interrupt
 /// to [`Can2040::on_irq`].
+///
+/// Receive is callback-based (see [`CanCallback`]), so `embedded_can::nb::Can`
+/// is not implemented. Wrap with a queue if poll-based receive is needed.
 ///
 /// # Example interrupt handler (bare-metal)
 /// ```ignore
@@ -240,6 +328,30 @@ impl Can2040 {
     pub fn stop(&mut self) {
         unsafe {
             sys::can2040_stop(&mut self.state.cbus as *mut _);
+        }
+    }
+
+    /// Queues a frame for transmission.
+    ///
+    /// Returns `Err(WouldBlock)` if the transmit queue (4 frames) is full.
+    pub fn transmit(&mut self, frame: &CanFrame) -> nb::Result<(), CanError> {
+        let ret = unsafe {
+            sys::can2040_transmit(
+                &mut self.state.cbus as *mut _,
+                &frame.0 as *const _ as *mut _,
+            )
+        };
+        if ret < 0 {
+            Err(nb::Error::WouldBlock)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Returns `true` if there is space in the transmit queue.
+    pub fn check_transmit(&self) -> bool {
+        unsafe {
+            sys::can2040_check_transmit(&self.state.cbus as *const _ as *mut _) != 0
         }
     }
 

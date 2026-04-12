@@ -3,36 +3,34 @@ resolver = "2"
 members = [".", "rp-can2040-sys"]
 
 [package]
-name = "can2040"
-version = "0.1.5"
+name = "rp-can2040"
+version = "0.1.0"
 edition = "2021"
-authors = ["Zephyr Guo <zephyr@atomi.ai>", "Tyler Slabinski <tslabinski@slabity.dev>"]
+authors = ["Tyler Slabinski <tslabinski@slabity.dev>"]
 license = "GPL-3.0"
 description = "A Can2040 port for Rust."
 repository = "https://github.com/Slabity/rp-can2040"
-categories = ["can"]
-keywords = ["can", "canopen"]
+categories = ["embedded", "no-std", "hardware-support"]
+keywords = ["can", "rp2040", "rp2350", "pico", "pio"]
 
 [features]
 default = ["rp2040"]
-rp2040 = ["dep:rp2040-hal", "dep:rp-pico", "rp-can2040-sys/rp2040"]
-rp2350 = ["dep:rp235x-hal", "rp-can2040-sys/rp2350"]
+rp2040 = ["rp-can2040-sys/rp2040"]
+rp2350 = ["rp-can2040-sys/rp2350"]
 
 [dependencies]
 rp-can2040-sys = { path = "rp-can2040-sys" }
-alloc-cortex-m = "0.4"
 cortex-m = "0.7"
-cortex-m-rt = "0.7"
 defmt = "0.3"
-defmt-rtt = "0.4"
 embedded-can = "0.4"
-embedded-hal = "1.0"
-libc = "0.2"
-panic-probe = "0.3"
 nb = "1.1"
-rp2040-hal = { version = "0.10", features = ["rt", "critical-section-impl"], optional = true }
-rp-pico = { version = "0.9", optional = true }
-rp235x-hal = { version = "0.4", features = ["rt", "critical-section-impl"], optional = true }
+
+[dev-dependencies]
+cortex-m-rt = "0.7"
+defmt-rtt = "0.4"
+panic-probe = "0.3"
+rp2040-hal = { version = "0.10", features = ["rt", "critical-section-impl"] }
+rp-pico = "0.9"
 
 [[example]]
 name = "can2040_demo"
