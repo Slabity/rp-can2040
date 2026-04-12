@@ -18,12 +18,13 @@ default = ["rp2040"]
 rp2040 = ["rp-can2040-sys/rp2040"]
 rp2350 = ["rp-can2040-sys/rp2350"]
 defmt = ["dep:defmt"]
+embedded-can = ["dep:embedded-can"]
 
 [dependencies]
 rp-can2040-sys = { path = "rp-can2040-sys" }
 cortex-m = "0.7"
 defmt = { version = "0.3", optional = true }
-embedded-can = "0.4"
+embedded-can = { version = "0.4", optional = true }
 nb = "1.1"
 
 [dev-dependencies]

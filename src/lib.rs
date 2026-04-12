@@ -4,7 +4,6 @@ pub use rp_can2040_sys as sys;
 
 use sys::can2040_msg__bindgen_ty_1;
 
-/// Default system clock frequencies
 #[cfg(feature = "rp2040")]
 pub const DEFAULT_SYS_FREQ: u32 = 125_000_000;
 #[cfg(feature = "rp2350")]
@@ -14,21 +13,14 @@ const ID_RTR: u32 = 1 << 30;
 const ID_EFF: u32 = 1 << 31;
 const EXTENDED_ID_MASK: u32 = 0x1FFF_FFFF;
 
-// ─── CanError ─────────────────────────────────────────────────────────────────
+#[cfg(feature = "embedded-can")]
+mod embedded_can_impl;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CanError {
     Overrun,
 }
-
-impl embedded_can::Error for CanError {
-    fn kind(&self) -> embedded_can::ErrorKind {
-        embedded_can::ErrorKind::Overrun
-    }
-}
-
-// ─── CanFrame ─────────────────────────────────────────────────────────────────
 
 /// A CAN bus frame.
 ///
@@ -85,78 +77,20 @@ impl CanFrame {
         }
     }
 
+    pub fn is_extended(&self) -> bool {
+        self.0.id & ID_EFF != 0
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.0.id & ID_RTR != 0
+    }
+
     pub fn dlc(&self) -> usize {
         self.0.dlc as usize
     }
 
     pub fn data(&self) -> &[u8] {
-        // dlc > 8 is valid per CAN spec but data array is only 8 bytes
-        let len = (self.0.dlc as usize).min(8);
-        unsafe { &self.0.__bindgen_anon_1.data[..len] }
-    }
-}
-
-impl embedded_can::Frame for CanFrame {
-    fn new(id: impl Into<embedded_can::Id>, data: &[u8]) -> Option<Self> {
-        if data.len() > 8 {
-            return None;
-        }
-        let raw_id = match id.into() {
-            embedded_can::Id::Standard(id) => id.as_raw() as u32,
-            embedded_can::Id::Extended(id) => id.as_raw() | ID_EFF,
-        };
-        let mut arr = [0u8; 8];
-        arr[..data.len()].copy_from_slice(data);
-        Some(Self(sys::can2040_msg {
-            id: raw_id,
-            dlc: data.len() as u32,
-            __bindgen_anon_1: can2040_msg__bindgen_ty_1 { data: arr },
-        }))
-    }
-
-    fn new_remote(id: impl Into<embedded_can::Id>, dlc: usize) -> Option<Self> {
-        if dlc > 15 {
-            return None;
-        }
-        let raw_id = match id.into() {
-            embedded_can::Id::Standard(id) => id.as_raw() as u32 | ID_RTR,
-            embedded_can::Id::Extended(id) => id.as_raw() | ID_EFF | ID_RTR,
-        };
-        Some(Self(sys::can2040_msg {
-            id: raw_id,
-            dlc: dlc as u32,
-            __bindgen_anon_1: can2040_msg__bindgen_ty_1 { data: [0u8; 8] },
-        }))
-    }
-
-    fn is_extended(&self) -> bool {
-        self.0.id & ID_EFF != 0
-    }
-
-    fn is_remote_frame(&self) -> bool {
-        self.0.id & ID_RTR != 0
-    }
-
-    fn id(&self) -> embedded_can::Id {
-        if self.0.id & ID_EFF != 0 {
-            embedded_can::Id::Extended(
-                embedded_can::ExtendedId::new(self.0.id & EXTENDED_ID_MASK).unwrap(),
-            )
-        } else {
-            embedded_can::Id::Standard(
-                embedded_can::StandardId::new((self.0.id & 0x7FF) as u16).unwrap(),
-            )
-        }
-    }
-
-    fn dlc(&self) -> usize {
-        self.0.dlc as usize
-    }
-
-    fn data(&self) -> &[u8] {
-        if self.0.id & ID_RTR != 0 {
-            return &[];
-        }
+        // dlc > 8 is valid per CAN spec but the data array is only 8 bytes
         let len = (self.0.dlc as usize).min(8);
         unsafe { &self.0.__bindgen_anon_1.data[..len] }
     }
@@ -168,8 +102,8 @@ impl core::fmt::Debug for CanFrame {
             f,
             "CanFrame {{ id: {:#x}, extended: {}, remote: {}, data: {:x?} }}",
             self.arb_id(),
-            self.0.id & ID_EFF != 0,
-            self.0.id & ID_RTR != 0,
+            self.is_extended(),
+            self.is_remote(),
             self.data()
         )
     }
@@ -182,14 +116,12 @@ impl defmt::Format for CanFrame {
             f,
             "CanFrame {{ id: {:#x}, extended: {=bool}, remote: {=bool}, data: {:x} }}",
             self.arb_id(),
-            self.0.id & ID_EFF != 0,
-            self.0.id & ID_RTR != 0,
+            self.is_extended(),
+            self.is_remote(),
             self.data()
         );
     }
 }
-
-// ─── Notification ────────────────────────────────────────────────────────────
 
 /// Event delivered to the user callback from interrupt context.
 pub enum Notification {
@@ -201,14 +133,16 @@ pub enum Notification {
 /// User-provided callback invoked from interrupt context on each CAN event.
 ///
 /// **Must be ISR-safe**: no blocking, no allocations, no non-reentrant
-/// operations. Typical implementations write to a lock-free queue or send to
-/// an `embassy_sync::channel::Channel`.
+/// operations. Typical implementations write to a lock-free queue or signal an
+/// `embassy_sync::channel::Channel`.
 pub type CanCallback = fn(Notification);
 
-// ─── Statistics ──────────────────────────────────────────────────────────────
-
 /// Snapshot of can2040 bus counters.
-#[derive(Debug)]
+///
+/// Counters are only reset by [`Can2040::new`]. To compute activity over a
+/// discrete period, subtract two snapshots; wrapping subtraction handles
+/// 32-bit counter rollovers correctly.
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CanStatistics {
     pub rx_total: u32,
@@ -217,7 +151,17 @@ pub struct CanStatistics {
     pub parse_error: u32,
 }
 
-// ─── Can2040 ─────────────────────────────────────────────────────────────────
+impl core::ops::Sub for CanStatistics {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        Self {
+            rx_total:    self.rx_total.wrapping_sub(rhs.rx_total),
+            tx_total:    self.tx_total.wrapping_sub(rhs.tx_total),
+            tx_attempt:  self.tx_attempt.wrapping_sub(rhs.tx_attempt),
+            parse_error: self.parse_error.wrapping_sub(rhs.parse_error),
+        }
+    }
+}
 
 // repr(C) with `cbus` as the first field lets us recover a pointer to
 // Can2040State from a *mut can2040 inside the C callback. The C library passes
@@ -225,7 +169,8 @@ pub struct CanStatistics {
 // repr(C) with cbus first, casting cd to *mut Can2040State is valid.
 #[repr(C)]
 struct Can2040State {
-    cbus: sys::can2040, // must remain the first field
+    cbus:     sys::can2040, // must remain the first field
+    pio_num:  u32,
     callback: CanCallback,
 }
 
@@ -234,9 +179,6 @@ struct Can2040State {
 /// This type owns all CAN state. There are no library-level globals: the
 /// caller is responsible for storage and for routing the correct PIO interrupt
 /// to [`Can2040::on_irq`].
-///
-/// Receive is callback-based (see [`CanCallback`]), so `embedded_can::nb::Can`
-/// is not implemented. Wrap with a queue if poll-based receive is needed.
 ///
 /// # Example interrupt handler (bare-metal)
 /// ```ignore
@@ -256,11 +198,9 @@ pub struct Can2040 {
 }
 
 // Can2040 contains *mut c_void (pio_hw) which is not Send by default.
-// Safety: Can2040 is designed for single-core Cortex-M use. All access to
-// the PIO hardware goes through the can2040 C library which is not
-// thread-safe, so the caller is responsible for ensuring exclusive access
-// (e.g. via a Mutex or by only accessing from interrupt + main with
-// critical sections). Marking Send allows storing Can2040 in a static Mutex.
+// Safety: all PIO hardware access goes through the can2040 C library which is
+// not thread-safe; the caller is responsible for exclusive access (e.g. a
+// Mutex). Marking Send allows storing Can2040 in a static Mutex.
 unsafe impl Send for Can2040 {}
 
 impl Can2040 {
@@ -283,7 +223,8 @@ impl Can2040 {
 
         let mut can = Self {
             state: Can2040State {
-                cbus: sys::can2040::default(),
+                cbus:     sys::can2040::default(),
+                pio_num,
                 callback,
             },
         };
@@ -316,6 +257,20 @@ impl Can2040 {
         }
     }
 
+    /// Resets internal state and clears the transmit queue, then restarts.
+    ///
+    /// Use this instead of [`stop`](Self::stop) + [`start`](Self::start) when
+    /// the TX queue needs to be cleared before resuming. Statistics counters
+    /// are also reset to zero.
+    pub fn reset(&mut self, sys_clock: u32, baud_rate: u32, gpio_rx: i32, gpio_tx: i32) {
+        unsafe {
+            let ptr = &mut self.state.cbus as *mut _;
+            sys::can2040_setup(ptr, self.state.pio_num);
+            sys::can2040_callback_config(ptr, Some(dispatch_callback));
+            sys::can2040_start(ptr, sys_clock, baud_rate, gpio_rx, gpio_tx);
+        }
+    }
+
     /// Must be called from the `PIOx_IRQ_0` interrupt handler for the PIO
     /// chosen at construction.
     pub fn on_irq(&mut self) {
@@ -344,11 +299,7 @@ impl Can2040 {
                 &frame.0 as *const _ as *mut _,
             )
         };
-        if ret < 0 {
-            Err(nb::Error::WouldBlock)
-        } else {
-            Ok(())
-        }
+        if ret < 0 { Err(nb::Error::WouldBlock) } else { Ok(()) }
     }
 
     /// Returns `true` if there is space in the transmit queue.
@@ -359,25 +310,26 @@ impl Can2040 {
     }
 
     /// Returns a snapshot of the current bus counters.
+    ///
+    /// To compute activity over a period, subtract two snapshots:
+    /// ```ignore
+    /// let delta = can.statistics() - prev;
+    /// ```
     pub fn statistics(&self) -> CanStatistics {
         let mut raw = sys::can2040_stats {
-            rx_total: 0,
-            tx_total: 0,
-            tx_attempt: 0,
-            parse_error: 0,
+            rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0,
         };
         unsafe {
-            // can2040_get_statistics takes *mut can2040 even though it only reads;
-            // cast away the shared reference to satisfy the C signature.
+            // can2040_get_statistics takes *mut even though it only reads
             sys::can2040_get_statistics(
                 &self.state.cbus as *const _ as *mut _,
                 &mut raw as *mut _,
             );
         }
         CanStatistics {
-            rx_total: raw.rx_total,
-            tx_total: raw.tx_total,
-            tx_attempt: raw.tx_attempt,
+            rx_total:    raw.rx_total,
+            tx_total:    raw.tx_total,
+            tx_attempt:  raw.tx_attempt,
             parse_error: raw.parse_error,
         }
     }
@@ -388,9 +340,9 @@ impl Can2040 {
 // so casting to *mut Can2040State recovers the full state including the Rust
 // callback.
 unsafe extern "C" fn dispatch_callback(
-    cd: *mut sys::can2040,
+    cd:     *mut sys::can2040,
     notify: u32,
-    msg: *mut sys::can2040_msg,
+    msg:    *mut sys::can2040_msg,
 ) {
     let state = &*(cd as *mut Can2040State);
     let cb = state.callback;
