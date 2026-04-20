@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [".", "rp-can2040-sys"]
+exclude = ["rp2040-project-template"]
 
 [package]
 name = "rp-can2040"
@@ -23,17 +24,37 @@ embedded-can = ["dep:embedded-can"]
 [dependencies]
 rp-can2040-sys = { path = "rp-can2040-sys" }
 cortex-m = "0.7"
-defmt = { version = "0.3", optional = true }
+defmt = { version = "1", optional = true }
 embedded-can = { version = "0.4", optional = true }
 nb = "1.1"
 
 [dev-dependencies]
 cortex-m-rt = "0.7"
-defmt-rtt = "0.4"
-panic-probe = "0.3"
-rp2040-hal = { version = "0.10", features = ["rt", "critical-section-impl"] }
-rp-pico = "0.9"
+defmt-rtt = "1"
+panic-probe = { version = "1", features = ["print-defmt"] }
+defmt = "1"
+rp2040-hal = { version = "0.12", features = ["rt", "critical-section-impl"] }
+rp2040-boot2 = "0.3"
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-sync = "0.8"
+critical-section = "1.2"
 
 [[example]]
-name = "can2040_demo"
+name = "receive"
+required-features = ["rp2040", "defmt"]
+
+[[example]]
+name = "transmit"
+required-features = ["rp2040", "defmt"]
+
+[[example]]
+name = "embedded_can_frame"
+required-features = ["rp2040", "defmt", "embedded-can"]
+
+[[example]]
+name = "embassy_receive"
+required-features = ["rp2040", "defmt"]
+
+[[example]]
+name = "dual_loopback"
 required-features = ["rp2040", "defmt"]
