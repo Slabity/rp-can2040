@@ -121,8 +121,8 @@ fn main() -> ! {
     info!("CAN loopback ready at {} baud", BAUD_RATE);
 
     let mut counter: u8 = 0;
-    let mut prev0 = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
-    let mut prev1 = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
+    let mut prev0 = CanStatistics::default();
+    let mut prev1 = CanStatistics::default();
 
     loop {
         cortex_m::asm::delay(62_500_000); // ~500ms at 125MHz
@@ -197,7 +197,7 @@ fn main() -> ! {
                         can.reset(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, CAN0_GPIO_RX, CAN0_GPIO_TX);
                     }
                 });
-                prev0 = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
+                prev0 = CanStatistics::default();
             } else {
                 prev0 = current;
             }
@@ -216,7 +216,7 @@ fn main() -> ! {
                         can.reset(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, CAN1_GPIO_RX, CAN1_GPIO_TX);
                     }
                 });
-                prev1 = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
+                prev1 = CanStatistics::default();
             } else {
                 prev1 = current;
             }

@@ -90,7 +90,7 @@ fn main() -> ! {
 
     info!("CAN bus listening at {} baud", BAUD_RATE);
 
-    let mut prev = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
+    let mut prev = CanStatistics::default();
 
     loop {
         // Poll for received frames every ~10ms for ~1s, then print statistics.

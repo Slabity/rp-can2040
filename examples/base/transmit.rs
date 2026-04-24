@@ -88,7 +88,7 @@ fn main() -> ! {
     info!("CAN bus ready, sending frames at {} baud", BAUD_RATE);
 
     let mut counter: u8 = 0;
-    let mut prev = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
+    let mut prev = CanStatistics::default();
 
     loop {
         cortex_m::asm::delay(62_500_000); // ~500ms at 125MHz

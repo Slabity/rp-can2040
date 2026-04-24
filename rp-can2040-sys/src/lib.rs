@@ -1,7 +1,10 @@
 #![no_std]
-#![allow(warnings)]
 
-include!(concat!(env!("OUT_DIR"), "/can2040_bindings.rs"));
+#[allow(warnings)]
+mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/can2040_bindings.rs"));
+}
+pub use bindings::*;
 
 macro_rules! impl_zeroed_default {
     ($($t:ty),*) => {

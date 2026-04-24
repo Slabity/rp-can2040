@@ -6,8 +6,14 @@ use sys::can2040_msg__bindgen_ty_1;
 #[cfg(feature = "embedded-can")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+/// Default system clock frequency in Hz for the target chip.
+/// Pass to [`Can2040::start`] or [`Can2040::reset`] when running at the
+/// standard clock rate.
 #[cfg(feature = "rp2040")]
 pub const DEFAULT_SYS_FREQ: u32 = 125_000_000;
+/// Default system clock frequency in Hz for the target chip.
+/// Pass to [`Can2040::start`] or [`Can2040::reset`] when running at the
+/// standard clock rate.
 #[cfg(feature = "rp2350")]
 pub const DEFAULT_SYS_FREQ: u32 = 150_000_000;
 
@@ -15,6 +21,10 @@ const ID_RTR: u32 = sys::CAN2040_ID_RTR as u32;
 const ID_EFF: u32 = sys::CAN2040_ID_EFF as u32;
 const EXTENDED_ID_MASK: u32 = 0x1FFF_FFFF;
 
+/// Errors reported by the CAN bus.
+///
+/// can2040's `NOTIFY_ERROR` notification does not distinguish between error
+/// types, so only a single variant is possible.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CanError {
@@ -87,14 +97,21 @@ impl CanFrame {
         }
     }
 
+    /// Returns `true` if this is an extended (29-bit) ID frame.
     pub fn is_extended(&self) -> bool {
         self.0.id & ID_EFF != 0
     }
 
+    /// Returns `true` if this is a remote transmission request (RTR) frame.
     pub fn is_remote(&self) -> bool {
         self.0.id & ID_RTR != 0
     }
 
+    /// Raw DLC field value (0–15).
+    ///
+    /// Per the CAN spec, DLC values 9–15 are valid but all carry exactly 8
+    /// data bytes. [`data`](Self::data) always returns `min(dlc, 8)` bytes,
+    /// so `dlc()` and `data().len()` may differ for DLC > 8.
     pub fn dlc(&self) -> usize {
         self.0.dlc as usize
     }
@@ -218,7 +235,7 @@ pub type CanCallback = fn(Notification);
 /// Counters are only reset by [`Can2040::new`]. To compute activity over a
 /// discrete period, subtract two snapshots; wrapping subtraction handles
 /// 32-bit counter rollovers correctly.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CanStatistics {
     pub rx_total: u32,
@@ -303,7 +320,7 @@ impl<const N: usize> RxQueue<N> {
 // repr(C) with cbus first, casting cd to *mut Can2040State is valid.
 #[repr(C)]
 struct Can2040State {
-    cbus:     sys::can2040, // must remain the first field
+    cbus:     sys::can2040, // must remain the first field — enforced by assert below
     pio_num:  u32,
     callback: CanCallback,
     // Monomorphised function pointer set by Can2040::new(). dispatch_callback
@@ -325,6 +342,18 @@ struct Can2040State {
 /// `N` frames. When the feature is inactive, `N` has no effect and may be
 /// omitted (the default of 8 is used).
 ///
+/// # Thread safety and reentrancy
+///
+/// The can2040 C library is not reentrant. [`start`](Self::start),
+/// [`stop`](Self::stop), [`reset`](Self::reset), [`transmit`](Self::transmit),
+/// and [`on_irq`](Self::on_irq) must not be called concurrently from multiple
+/// cores or from within the callback. On a dual-core system, protect `Can2040`
+/// with a mutex and access it from one context at a time.
+///
+/// [`check_transmit`](Self::check_transmit) and [`statistics`](Self::statistics)
+/// are exceptions: the C library explicitly documents both as safe to call from
+/// another core while the interrupt handler is running.
+///
 /// # Example interrupt handler (bare-metal)
 /// ```ignore
 /// static CAN: Mutex<RefCell<Option<Can2040>>> = Mutex::new(RefCell::new(None));
@@ -338,14 +367,24 @@ struct Can2040State {
 ///     });
 /// }
 /// ```
+const _: () = assert!(
+    core::mem::offset_of!(Can2040State, cbus) == 0,
+    "cbus must be the first field of Can2040State for the C callback pointer cast to be valid",
+);
+
 // repr(C) with `state` first is required so that `enqueue_rx<N>` can recover
 // a *mut Can2040<N> from the *mut Can2040State that dispatch_callback holds.
 #[repr(C)]
 pub struct Can2040<const N: usize = 8> {
-    state: Can2040State, // must remain the first field
+    state: Can2040State, // must remain the first field — enforced by assert below
     #[cfg(feature = "embedded-can")]
     rx_queue: RxQueue<N>,
 }
+
+const _: () = assert!(
+    core::mem::offset_of!(Can2040<8>, state) == 0,
+    "state must be the first field of Can2040 for enqueue_rx pointer recovery to be valid",
+);
 
 // Can2040 contains *mut c_void (pio_hw) which is not Send by default.
 // Safety: all PIO hardware access goes through the can2040 C library which is
@@ -392,13 +431,17 @@ impl<const N: usize> Can2040<N> {
         can
     }
 
-    /// Starts the CAN bus. May also be called after [`stop`](Self::stop) to restart.
+    /// Starts the CAN bus. May also be called after [`stop`](Self::stop) to
+    /// restart without clearing the transmit queue. Use [`reset`](Self::reset)
+    /// if the queue must be cleared.
     ///
     /// # Arguments
     /// - `sys_clock`: system clock in Hz (use [`DEFAULT_SYS_FREQ`] for the board default).
     /// - `baud_rate`: CAN bit rate in bits per second (e.g. `500_000`).
     /// - `gpio_rx`: GPIO pin for CAN RX.
-    /// - `gpio_tx`: GPIO pin for CAN TX. Pass `-1` for receive-only (silent) mode.
+    /// - `gpio_tx`: GPIO pin for CAN TX. Pass `-1` for receive-only (silent)
+    ///   mode — the TX GPIO will not be driven, so the caller must ensure the
+    ///   transceiver TXD pin is held high (recessive) externally.
     pub fn start(&mut self, sys_clock: u32, baud_rate: u32, gpio_rx: i32, gpio_tx: i32) {
         unsafe {
             sys::can2040_start(
@@ -411,14 +454,18 @@ impl<const N: usize> Can2040<N> {
         }
     }
 
-    /// Resets internal state and clears the transmit queue, then restarts.
+    /// Stops the bus, clears the transmit queue, then restarts.
     ///
     /// Use this instead of [`stop`](Self::stop) + [`start`](Self::start) when
     /// the TX queue needs to be cleared before resuming. Statistics counters
     /// are also reset to zero.
+    ///
+    /// The PIO interrupt **must be masked** before calling this (same requirement
+    /// as [`stop`](Self::stop)).
     pub fn reset(&mut self, sys_clock: u32, baud_rate: u32, gpio_rx: i32, gpio_tx: i32) {
         unsafe {
             let ptr = &mut self.state.cbus as *mut _;
+            sys::can2040_stop(ptr);
             sys::can2040_setup(ptr, self.state.pio_num);
             sys::can2040_callback_config(ptr, Some(dispatch_callback));
             sys::can2040_start(ptr, sys_clock, baud_rate, gpio_rx, gpio_tx);
@@ -435,8 +482,16 @@ impl<const N: usize> Can2040<N> {
 
     /// Stops the CAN bus and disables the PIO state machines.
     ///
-    /// The caller should mask the PIO interrupt **before** calling this
-    /// to prevent spurious calls to [`on_irq`](Self::on_irq).
+    /// The PIO interrupt **must be masked** before calling this to prevent
+    /// spurious calls to [`on_irq`](Self::on_irq).
+    ///
+    /// The transmit queue is **not** cleared by `stop`. Call
+    /// [`reset`](Self::reset) instead if the queue must be empty before
+    /// resuming.
+    ///
+    /// If a frame is queued for transmission at the time `stop` is called, it
+    /// may be transmitted successfully without a corresponding `NOTIFY_TX`
+    /// callback.
     pub fn stop(&mut self) {
         unsafe {
             sys::can2040_stop(&mut self.state.cbus as *mut _);
@@ -446,6 +501,10 @@ impl<const N: usize> Can2040<N> {
     /// Queues a frame for transmission.
     ///
     /// Returns `Err(WouldBlock)` if the transmit queue (4 frames) is full.
+    /// Frames are transmitted in FIFO order with no priority-based reordering.
+    ///
+    /// May be called from within the [`CanCallback`], though doing so is
+    /// discouraged as it adds latency to the interrupt handler.
     pub fn transmit(&mut self, frame: &CanFrame) -> nb::Result<(), CanError> {
         let ret = unsafe {
             sys::can2040_transmit(
@@ -457,25 +516,32 @@ impl<const N: usize> Can2040<N> {
     }
 
     /// Returns `true` if there is space in the transmit queue.
-    pub fn check_transmit(&mut self) -> bool {
+    ///
+    /// Safe to call from another core while the interrupt handler is running.
+    /// The result is an instantaneous snapshot; the queue may fill between
+    /// this check and a subsequent [`transmit`](Self::transmit) call.
+    /// `transmit` will return `Err(WouldBlock)` if that happens.
+    pub fn check_transmit(&self) -> bool {
         unsafe {
-            sys::can2040_check_transmit(&mut self.state.cbus as *mut _) != 0
+            sys::can2040_check_transmit(&self.state.cbus as *const _ as *mut _) != 0
         }
     }
 
     /// Returns a snapshot of the current bus counters.
     ///
+    /// Safe to call from another core while the interrupt handler is running.
+    ///
     /// To compute activity over a period, subtract two snapshots:
     /// ```ignore
     /// let delta = can.statistics() - prev;
     /// ```
-    pub fn statistics(&mut self) -> CanStatistics {
+    pub fn statistics(&self) -> CanStatistics {
         let mut raw = sys::can2040_stats {
             rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0,
         };
         unsafe {
             sys::can2040_get_statistics(
-                &mut self.state.cbus as *mut _,
+                &self.state.cbus as *const _ as *mut _,
                 &mut raw as *mut _,
             );
         }
@@ -525,6 +591,15 @@ impl<const N: usize> embedded_can::blocking::Can for Can2040<N> {
     }
 
     /// Spins until a frame is received.
+    ///
+    /// # Warning
+    ///
+    /// This will spin indefinitely if the bus is silent. On bare-metal with no
+    /// preemption, that is a permanent hang. Additionally, do not call this
+    /// while the PIO interrupt is masked — the ISR that feeds the receive queue
+    /// will never fire, causing a guaranteed deadlock. Prefer
+    /// [`embedded_can::nb::Can::receive`] if you need a timeout or need to
+    /// interleave other work.
     fn receive(&mut self) -> Result<CanFrame, CanError> {
         loop {
             if let Some(frame) = self.rx_queue.pop() {
