@@ -1,7 +1,14 @@
-//! Receive example
+//! Base receive example
 //!
-//! Demonstrates basic CAN bus receive using a callback.
-//! Received frames are logged via defmt; all other bus events are ignored.
+//! The node participates fully in the CAN protocol (sends ACK bits) but
+//! does not transmit application frames. Received frames are logged via
+//! defmt; delta statistics are printed every second.
+//!
+//! For monitor-only (no ACK) mode pass -1 as gpio_tx to can.start().
+//!
+//! Wiring:
+//!   RP2040 GPIO17  →  Transceiver RXD
+//!   RP2040 GPIO16  →  Transceiver TXD
 
 #![no_std]
 #![no_main]
@@ -21,9 +28,9 @@ use rp_can2040::{Can2040, CanCallback, CanStatistics, Notification};
 static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 const XOSC_CRYSTAL_FREQ: u32 = 12_000_000;
-const BAUD_RATE: u32 = 125_000;
-const GPIO_RX: i32 = 16;
-const GPIO_TX: i32 = 17;
+const BAUD_RATE: u32 = 500_000;
+const GPIO_RX: i32 = 17;
+const GPIO_TX: i32 = 16;
 
 static CAN: Mutex<RefCell<Option<Can2040>>> = Mutex::new(RefCell::new(None));
 
@@ -36,7 +43,7 @@ fn PIO0_IRQ_0() {
     });
 }
 
-fn on_rx(notification: Notification) {
+fn on_can_event(notification: Notification) {
     match notification {
         Notification::Rx(frame) => info!("RX: {:?}", frame),
         Notification::Error => error!("CAN bus error"),
@@ -63,12 +70,14 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let _pins =
-        rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
+    let pins = rp2040_hal::gpio::Pins::new(
+        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
+    );
+    // Hold TX high (recessive) before PIO takes over; floating TXD forces bus dominant.
+    let _tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 
-    let mut can = Can2040::new(0 /* PIO0 */, on_rx as CanCallback);
-
-    can.start(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, GPIO_RX, -1); // -1 = silent/receive-only, no ACK injection
+    let mut can = Can2040::new(0 /* PIO0 */, on_can_event as CanCallback);
+    can.start(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, GPIO_RX, GPIO_TX);
 
     cortex_m::interrupt::free(|cs| {
         *CAN.borrow(cs).borrow_mut() = Some(can);
@@ -87,7 +96,7 @@ fn main() -> ! {
         cortex_m::asm::delay(125_000_000); // ~1s at 125MHz
 
         let current = cortex_m::interrupt::free(|cs| {
-            CAN.borrow(cs).borrow().as_ref().map(|c| c.statistics())
+            CAN.borrow(cs).borrow_mut().as_mut().map(|c| c.statistics())
         });
 
         if let Some(current) = current {

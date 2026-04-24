@@ -35,26 +35,34 @@ panic-probe = { version = "1", features = ["print-defmt"] }
 defmt = "1"
 rp2040-hal = { version = "0.12", features = ["rt", "critical-section-impl"] }
 rp2040-boot2 = "0.3"
-embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
-embassy-sync = "0.8"
 critical-section = "1.2"
 
 [[example]]
-name = "receive"
+name = "base_receive"
+path = "examples/base/receive.rs"
 required-features = ["rp2040", "defmt"]
 
 [[example]]
-name = "transmit"
+name = "base_transmit"
+path = "examples/base/transmit.rs"
 required-features = ["rp2040", "defmt"]
 
 [[example]]
-name = "embedded_can_frame"
+name = "base_loopback"
+path = "examples/base/loopback.rs"
+required-features = ["rp2040", "defmt"]
+
+[[example]]
+name = "embedded_can_receive"
+path = "examples/embedded_can/receive.rs"
 required-features = ["rp2040", "defmt", "embedded-can"]
 
 [[example]]
-name = "embassy_receive"
-required-features = ["rp2040", "defmt"]
+name = "embedded_can_transmit"
+path = "examples/embedded_can/transmit.rs"
+required-features = ["rp2040", "defmt", "embedded-can"]
 
 [[example]]
-name = "dual_loopback"
-required-features = ["rp2040", "defmt"]
+name = "embedded_can_loopback"
+path = "examples/embedded_can/loopback.rs"
+required-features = ["rp2040", "defmt", "embedded-can"]

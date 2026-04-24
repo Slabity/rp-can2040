@@ -1,7 +1,12 @@
-//! Transmit example
+//! Base transmit example
 //!
-//! Demonstrates queuing CAN frames for transmission. A frame is sent every
-//! ~500ms; the TX confirmation and any received frames are logged via defmt.
+//! Queues a CAN frame for transmission every 500ms. TX confirmations and
+//! any received frames are logged via defmt; delta statistics are printed
+//! each cycle.
+//!
+//! Wiring:
+//!   RP2040 GPIO17  →  Transceiver RXD
+//!   RP2040 GPIO16  →  Transceiver TXD
 
 #![no_std]
 #![no_main]
@@ -22,8 +27,8 @@ static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 const XOSC_CRYSTAL_FREQ: u32 = 12_000_000;
 const BAUD_RATE: u32 = 500_000;
-const GPIO_RX: i32 = 16;
-const GPIO_TX: i32 = 17;
+const GPIO_RX: i32 = 17;
+const GPIO_TX: i32 = 16;
 
 static CAN: Mutex<RefCell<Option<Can2040>>> = Mutex::new(RefCell::new(None));
 
@@ -63,15 +68,12 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let _pins = rp2040_hal::gpio::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
+    let pins = rp2040_hal::gpio::Pins::new(
+        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
     );
+    let _tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 
     let mut can = Can2040::new(0 /* PIO0 */, on_can_event as CanCallback);
-
     can.start(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, GPIO_RX, GPIO_TX);
 
     cortex_m::interrupt::free(|cs| {
@@ -83,7 +85,7 @@ fn main() -> ! {
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::PIO0_IRQ_0);
     }
 
-    info!("CAN bus ready, sending frames");
+    info!("CAN bus ready, sending frames at {} baud", BAUD_RATE);
 
     let mut counter: u8 = 0;
     let mut prev = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
@@ -91,7 +93,7 @@ fn main() -> ! {
     loop {
         cortex_m::asm::delay(62_500_000); // ~500ms at 125MHz
 
-        let frame = CanFrame::new(0x123, &[counter, counter + 1, counter + 2]).unwrap();
+        let frame = CanFrame::new(0x123, &[counter, counter.wrapping_add(1), counter.wrapping_add(2)]).unwrap();
 
         let current = cortex_m::interrupt::free(|cs| {
             if let Some(can) = CAN.borrow(cs).borrow_mut().as_mut() {

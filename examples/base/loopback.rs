@@ -1,24 +1,18 @@
-//! Dual CAN loopback example (physical transceivers)
+//! Base loopback example
 //!
-//! Runs two independent can2040 instances on PIO0 and PIO1, each connected to
-//! a separate SN65HVD230 transceiver. The two transceivers are wired together
-//! over a short CAN bus. The built-in 120 Ω resistor on each board provides
-//! correct bus termination (two 120 Ω end-terminators → 60 Ω total).
-//!
-//! CAN0 transmits a frame with ID 0x100 every 500ms. CAN1 receives it and
-//! sends a reply with ID 0x200. Both nodes log every received frame.
+//! Two independent can2040 instances on PIO0 and PIO1, each connected to
+//! a separate transceiver. The transceivers are wired together on a short
+//! CAN bus. CAN0 transmits a frame every 500ms; CAN1 receives it and sends
+//! a reply. Delta statistics and bus-off recovery are included.
 //!
 //! Wiring:
-//!
-//!   RP2040 GPIO16  →  Transceiver 0 RXD
-//!   RP2040 GPIO17  →  Transceiver 0 TXD
-//!   RP2040 GPIO14  →  Transceiver 1 RXD
-//!   RP2040 GPIO15  →  Transceiver 1 TXD
+//!   RP2040 GPIO17  →  Transceiver 0 RXD
+//!   RP2040 GPIO16  →  Transceiver 0 TXD
+//!   RP2040 GPIO15  →  Transceiver 1 RXD
+//!   RP2040 GPIO14  →  Transceiver 1 TXD
 //!
 //!   Transceiver 0 CAN-H  ───  Transceiver 1 CAN-H
 //!   Transceiver 0 CAN-L  ───  Transceiver 1 CAN-L
-//!
-//!   Both transceivers share 3V3 and GND with the RP2040.
 
 #![no_std]
 #![no_main]
@@ -40,16 +34,13 @@ static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 const XOSC_CRYSTAL_FREQ: u32 = 12_000_000;
 const BAUD_RATE: u32 = 500_000;
-
-const CAN0_GPIO_RX: i32 = 16;
-const CAN0_GPIO_TX: i32 = 17;
-const CAN1_GPIO_RX: i32 = 14;
-const CAN1_GPIO_TX: i32 = 15;
+const CAN0_GPIO_RX: i32 = 17;
+const CAN0_GPIO_TX: i32 = 16;
+const CAN1_GPIO_RX: i32 = 15;
+const CAN1_GPIO_TX: i32 = 14;
 
 static CAN0: Mutex<RefCell<Option<Can2040>>> = Mutex::new(RefCell::new(None));
 static CAN1: Mutex<RefCell<Option<Can2040>>> = Mutex::new(RefCell::new(None));
-
-// Set by the CAN1 callback to request a reply from the main loop.
 static CAN1_SEND_REPLY: AtomicBool = AtomicBool::new(false);
 
 #[interrupt]
@@ -108,12 +99,11 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let _pins = rp2040_hal::gpio::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
+    let pins = rp2040_hal::gpio::Pins::new(
+        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
     );
+    let _can0_tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
+    let _can1_tx = pins.gpio14.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 
     let mut can0 = Can2040::new(0 /* PIO0 */, on_can0_event as CanCallback);
     can0.start(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, CAN0_GPIO_RX, CAN0_GPIO_TX);
@@ -135,7 +125,7 @@ fn main() -> ! {
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::PIO1_IRQ_0);
     }
 
-    info!("Dual CAN loopback ready at {} baud", BAUD_RATE);
+    info!("CAN loopback ready at {} baud", BAUD_RATE);
 
     let mut counter: u8 = 0;
     let mut prev0 = CanStatistics { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
@@ -144,7 +134,6 @@ fn main() -> ! {
     loop {
         cortex_m::asm::delay(62_500_000); // ~500ms at 125MHz
 
-        // CAN0 sends a frame.
         let frame = CanFrame::new(0x100, &[counter]).unwrap();
         let stats0 = cortex_m::interrupt::free(|cs| {
             if let Some(can) = CAN0.borrow(cs).borrow_mut().as_mut() {
@@ -158,7 +147,6 @@ fn main() -> ! {
             }
         });
 
-        // If CAN1 received a frame, send a reply.
         let stats1 = cortex_m::interrupt::free(|cs| {
             if let Some(can) = CAN1.borrow(cs).borrow_mut().as_mut() {
                 if CAN1_SEND_REPLY.load(Ordering::Relaxed) {
@@ -181,8 +169,6 @@ fn main() -> ! {
                 "CAN0 stats: rx={} tx={} tx_attempt={} errors={}",
                 delta.rx_total, delta.tx_total, delta.tx_attempt, delta.parse_error
             );
-            // Bus-off detection: attempts were made but none succeeded. Reset
-            // to recover the PIO state machine and drain the stale TX queue.
             if delta.tx_attempt > 0 && delta.tx_total == 0 {
                 error!("CAN0 bus-off detected, resetting");
                 cortex_m::interrupt::free(|cs| {
