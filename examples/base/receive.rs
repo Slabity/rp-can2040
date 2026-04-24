@@ -70,9 +70,8 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let pins = rp2040_hal::gpio::Pins::new(
-        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
-    );
+    let pins =
+        rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
     // Hold TX high (recessive) before PIO takes over; floating TXD forces bus dominant.
     let _tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 

@@ -2,9 +2,9 @@
 
 pub use rp_can2040_sys as sys;
 
-use sys::can2040_msg__bindgen_ty_1;
 #[cfg(feature = "embedded-can")]
 use core::sync::atomic::{AtomicUsize, Ordering};
+use sys::can2040_msg__bindgen_ty_1;
 
 /// Default system clock frequency in Hz for the target chip.
 /// Pass to [`Can2040::start`] or [`Can2040::reset`] when running at the
@@ -248,9 +248,9 @@ impl core::ops::Sub for CanStatistics {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         Self {
-            rx_total:    self.rx_total.wrapping_sub(rhs.rx_total),
-            tx_total:    self.tx_total.wrapping_sub(rhs.tx_total),
-            tx_attempt:  self.tx_attempt.wrapping_sub(rhs.tx_attempt),
+            rx_total: self.rx_total.wrapping_sub(rhs.rx_total),
+            tx_total: self.tx_total.wrapping_sub(rhs.tx_total),
+            tx_attempt: self.tx_attempt.wrapping_sub(rhs.tx_attempt),
             parse_error: self.parse_error.wrapping_sub(rhs.parse_error),
         }
     }
@@ -262,7 +262,7 @@ impl core::ops::Sub for CanStatistics {
 /// `N` must be > 0.
 #[cfg(feature = "embedded-can")]
 struct RxQueue<const N: usize> {
-    buf:  core::cell::UnsafeCell<[core::mem::MaybeUninit<CanFrame>; N]>,
+    buf: core::cell::UnsafeCell<[core::mem::MaybeUninit<CanFrame>; N]>,
     head: AtomicUsize,
     tail: AtomicUsize,
 }
@@ -295,7 +295,9 @@ impl<const N: usize> RxQueue<N> {
             return false;
         }
         // Safety: SPSC — producer exclusively owns slot `tail % N`.
-        unsafe { (*self.buf.get())[tail % N].write(frame); }
+        unsafe {
+            (*self.buf.get())[tail % N].write(frame);
+        }
         self.tail.store(tail.wrapping_add(1), Ordering::Release);
         true
     }
@@ -320,8 +322,8 @@ impl<const N: usize> RxQueue<N> {
 // repr(C) with cbus first, casting cd to *mut Can2040State is valid.
 #[repr(C)]
 struct Can2040State {
-    cbus:     sys::can2040, // must remain the first field — enforced by assert below
-    pio_num:  u32,
+    cbus: sys::can2040, // must remain the first field — enforced by assert below
+    pio_num: u32,
     callback: CanCallback,
     // Monomorphised function pointer set by Can2040::new(). dispatch_callback
     // calls this to push received frames into the generic RxQueue<N> without
@@ -412,7 +414,7 @@ impl<const N: usize> Can2040<N> {
 
         let mut can = Self {
             state: Can2040State {
-                cbus:     sys::can2040::default(),
+                cbus: sys::can2040::default(),
                 pio_num,
                 callback,
                 #[cfg(feature = "embedded-can")]
@@ -507,12 +509,13 @@ impl<const N: usize> Can2040<N> {
     /// discouraged as it adds latency to the interrupt handler.
     pub fn transmit(&mut self, frame: &CanFrame) -> nb::Result<(), CanError> {
         let ret = unsafe {
-            sys::can2040_transmit(
-                &mut self.state.cbus as *mut _,
-                &frame.0 as *const _ as *mut _,
-            )
+            sys::can2040_transmit(&mut self.state.cbus as *mut _, &frame.0 as *const _ as *mut _)
         };
-        if ret < 0 { Err(nb::Error::WouldBlock) } else { Ok(()) }
+        if ret < 0 {
+            Err(nb::Error::WouldBlock)
+        } else {
+            Ok(())
+        }
     }
 
     /// Returns `true` if there is space in the transmit queue.
@@ -522,9 +525,7 @@ impl<const N: usize> Can2040<N> {
     /// this check and a subsequent [`transmit`](Self::transmit) call.
     /// `transmit` will return `Err(WouldBlock)` if that happens.
     pub fn check_transmit(&self) -> bool {
-        unsafe {
-            sys::can2040_check_transmit(&self.state.cbus as *const _ as *mut _) != 0
-        }
+        unsafe { sys::can2040_check_transmit(&self.state.cbus as *const _ as *mut _) != 0 }
     }
 
     /// Returns a snapshot of the current bus counters.
@@ -536,19 +537,15 @@ impl<const N: usize> Can2040<N> {
     /// let delta = can.statistics() - prev;
     /// ```
     pub fn statistics(&self) -> CanStatistics {
-        let mut raw = sys::can2040_stats {
-            rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0,
-        };
+        let mut raw =
+            sys::can2040_stats { rx_total: 0, tx_total: 0, tx_attempt: 0, parse_error: 0 };
         unsafe {
-            sys::can2040_get_statistics(
-                &self.state.cbus as *const _ as *mut _,
-                &mut raw as *mut _,
-            );
+            sys::can2040_get_statistics(&self.state.cbus as *const _ as *mut _, &mut raw as *mut _);
         }
         CanStatistics {
-            rx_total:    raw.rx_total,
-            tx_total:    raw.tx_total,
-            tx_attempt:  raw.tx_attempt,
+            rx_total: raw.rx_total,
+            tx_total: raw.tx_total,
+            tx_attempt: raw.tx_attempt,
             parse_error: raw.parse_error,
         }
     }
@@ -615,9 +612,9 @@ impl<const N: usize> embedded_can::blocking::Can for Can2040<N> {
 // so casting to *mut Can2040State recovers the full state including the Rust
 // callback.
 unsafe extern "C" fn dispatch_callback(
-    cd:     *mut sys::can2040,
+    cd: *mut sys::can2040,
     notify: u32,
-    msg:    *mut sys::can2040_msg,
+    msg: *mut sys::can2040_msg,
 ) {
     let state = &*(cd as *mut Can2040State);
     let cb = state.callback;

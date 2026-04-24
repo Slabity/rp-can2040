@@ -99,9 +99,8 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let pins = rp2040_hal::gpio::Pins::new(
-        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
-    );
+    let pins =
+        rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
     let _can0_tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
     let _can1_tx = pins.gpio14.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 
@@ -173,7 +172,12 @@ fn main() -> ! {
                 error!("CAN0 bus-off detected, resetting");
                 cortex_m::interrupt::free(|cs| {
                     if let Some(can) = CAN0.borrow(cs).borrow_mut().as_mut() {
-                        can.reset(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, CAN0_GPIO_RX, CAN0_GPIO_TX);
+                        can.reset(
+                            rp_can2040::DEFAULT_SYS_FREQ,
+                            BAUD_RATE,
+                            CAN0_GPIO_RX,
+                            CAN0_GPIO_TX,
+                        );
                     }
                 });
                 prev0 = CanStatistics::default();
@@ -192,7 +196,12 @@ fn main() -> ! {
                 error!("CAN1 bus-off detected, resetting");
                 cortex_m::interrupt::free(|cs| {
                     if let Some(can) = CAN1.borrow(cs).borrow_mut().as_mut() {
-                        can.reset(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, CAN1_GPIO_RX, CAN1_GPIO_TX);
+                        can.reset(
+                            rp_can2040::DEFAULT_SYS_FREQ,
+                            BAUD_RATE,
+                            CAN1_GPIO_RX,
+                            CAN1_GPIO_TX,
+                        );
                     }
                 });
                 prev1 = CanStatistics::default();

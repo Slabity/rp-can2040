@@ -70,9 +70,8 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let pins = rp2040_hal::gpio::Pins::new(
-        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
-    );
+    let pins =
+        rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
     // Hold TX high (recessive) before PIO takes over; floating TXD forces bus dominant.
     let _tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 
@@ -96,20 +95,24 @@ fn main() -> ! {
         // Poll for received frames every ~10ms for ~1s, then print statistics.
         for _ in 0..100 {
             let maybe_frame = cortex_m::interrupt::free(|cs| {
-                CAN.borrow(cs).borrow_mut().as_mut().and_then(|can| {
-                    NbCan::receive(can).ok()
-                })
+                CAN.borrow(cs).borrow_mut().as_mut().and_then(|can| NbCan::receive(can).ok())
             });
 
             if let Some(frame) = maybe_frame {
                 match frame.id() {
                     Id::Standard(id) => info!(
                         "RX std  id={:#05x} dlc={} remote={} data={:x}",
-                        id.as_raw(), frame.dlc(), frame.is_remote_frame(), frame.data()
+                        id.as_raw(),
+                        frame.dlc(),
+                        frame.is_remote_frame(),
+                        frame.data()
                     ),
                     Id::Extended(id) => info!(
                         "RX ext  id={:#010x} dlc={} remote={} data={:x}",
-                        id.as_raw(), frame.dlc(), frame.is_remote_frame(), frame.data()
+                        id.as_raw(),
+                        frame.dlc(),
+                        frame.is_remote_frame(),
+                        frame.data()
                     ),
                 }
             }

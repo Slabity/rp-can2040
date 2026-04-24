@@ -54,11 +54,7 @@ fn build_library_from_source(is_rp2350: bool) {
 fn use_prebuilt_library(is_rp2350: bool) {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let target_name = if is_rp2350 { "rp2350" } else { "rp2040" };
-    println!(
-        "cargo:rustc-link-search=native={}/lib/{}",
-        manifest_dir.display(),
-        target_name
-    );
+    println!("cargo:rustc-link-search=native={}/lib/{}", manifest_dir.display(), target_name);
 }
 
 // Writes bindings to OUT_DIR so lib.rs can unconditionally include! them

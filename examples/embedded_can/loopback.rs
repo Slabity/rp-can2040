@@ -92,9 +92,8 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let pins = rp2040_hal::gpio::Pins::new(
-        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
-    );
+    let pins =
+        rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
     let _can0_tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
     let _can1_tx = pins.gpio14.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 
@@ -128,10 +127,7 @@ fn main() -> ! {
         cortex_m::asm::delay(62_500_000); // ~500ms at 125MHz
 
         // CAN0: transmit a frame.
-        let frame = <CanFrame as Frame>::new(
-            StandardId::new(0x100).unwrap(),
-            &[counter],
-        ).unwrap();
+        let frame = <CanFrame as Frame>::new(StandardId::new(0x100).unwrap(), &[counter]).unwrap();
 
         let stats0 = cortex_m::interrupt::free(|cs| {
             if let Some(can) = CAN0.borrow(cs).borrow_mut().as_mut() {
@@ -153,8 +149,12 @@ fn main() -> ! {
             });
             match maybe {
                 Some(rx) => match rx.id() {
-                    Id::Standard(id) => info!("CAN0 RX: id={:#05x} data={:x}", id.as_raw(), rx.data()),
-                    Id::Extended(id) => info!("CAN0 RX: id={:#010x} data={:x}", id.as_raw(), rx.data()),
+                    Id::Standard(id) => {
+                        info!("CAN0 RX: id={:#05x} data={:x}", id.as_raw(), rx.data())
+                    }
+                    Id::Extended(id) => {
+                        info!("CAN0 RX: id={:#010x} data={:x}", id.as_raw(), rx.data())
+                    }
                 },
                 None => break,
             }
@@ -165,13 +165,16 @@ fn main() -> ! {
             if let Some(can) = CAN1.borrow(cs).borrow_mut().as_mut() {
                 while let Ok(rx) = NbCan::receive(can) {
                     match rx.id() {
-                        Id::Standard(id) => info!("CAN1 RX: id={:#05x} data={:x}", id.as_raw(), rx.data()),
-                        Id::Extended(id) => info!("CAN1 RX: id={:#010x} data={:x}", id.as_raw(), rx.data()),
+                        Id::Standard(id) => {
+                            info!("CAN1 RX: id={:#05x} data={:x}", id.as_raw(), rx.data())
+                        }
+                        Id::Extended(id) => {
+                            info!("CAN1 RX: id={:#010x} data={:x}", id.as_raw(), rx.data())
+                        }
                     }
-                    let reply = <CanFrame as Frame>::new(
-                        StandardId::new(0x200).unwrap(),
-                        &[counter],
-                    ).unwrap();
+                    let reply =
+                        <CanFrame as Frame>::new(StandardId::new(0x200).unwrap(), &[counter])
+                            .unwrap();
                     match NbCan::transmit(can, &reply) {
                         Ok(_displaced) => info!("CAN1 TX: {:?}", reply),
                         Err(nb::Error::WouldBlock) => error!("CAN1 TX queue full"),
@@ -194,7 +197,12 @@ fn main() -> ! {
                 error!("CAN0 bus-off detected, resetting");
                 cortex_m::interrupt::free(|cs| {
                     if let Some(can) = CAN0.borrow(cs).borrow_mut().as_mut() {
-                        can.reset(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, CAN0_GPIO_RX, CAN0_GPIO_TX);
+                        can.reset(
+                            rp_can2040::DEFAULT_SYS_FREQ,
+                            BAUD_RATE,
+                            CAN0_GPIO_RX,
+                            CAN0_GPIO_TX,
+                        );
                     }
                 });
                 prev0 = CanStatistics::default();
@@ -213,7 +221,12 @@ fn main() -> ! {
                 error!("CAN1 bus-off detected, resetting");
                 cortex_m::interrupt::free(|cs| {
                     if let Some(can) = CAN1.borrow(cs).borrow_mut().as_mut() {
-                        can.reset(rp_can2040::DEFAULT_SYS_FREQ, BAUD_RATE, CAN1_GPIO_RX, CAN1_GPIO_TX);
+                        can.reset(
+                            rp_can2040::DEFAULT_SYS_FREQ,
+                            BAUD_RATE,
+                            CAN1_GPIO_RX,
+                            CAN1_GPIO_TX,
+                        );
                     }
                 });
                 prev1 = CanStatistics::default();

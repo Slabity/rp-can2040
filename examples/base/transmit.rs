@@ -68,9 +68,8 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let pins = rp2040_hal::gpio::Pins::new(
-        pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS,
-    );
+    let pins =
+        rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
     let _tx = pins.gpio16.into_push_pull_output_in_state(rp2040_hal::gpio::PinState::High);
 
     let mut can = Can2040::new(0 /* PIO0 */, on_can_event as CanCallback);
@@ -93,7 +92,9 @@ fn main() -> ! {
     loop {
         cortex_m::asm::delay(62_500_000); // ~500ms at 125MHz
 
-        let frame = CanFrame::new(0x123, &[counter, counter.wrapping_add(1), counter.wrapping_add(2)]).unwrap();
+        let frame =
+            CanFrame::new(0x123, &[counter, counter.wrapping_add(1), counter.wrapping_add(2)])
+                .unwrap();
 
         let current = cortex_m::interrupt::free(|cs| {
             if let Some(can) = CAN.borrow(cs).borrow_mut().as_mut() {
